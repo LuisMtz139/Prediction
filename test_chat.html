@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Test — Servicio de Mensajería WebSocket</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0f17;
+      --surface: #161927;
+      --surface2: #1e2235;
+      --border: #2a2f45;
+      --accent: #6c63ff;
+      --accent2: #48cfad;
+      --danger: #ff6b6b;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --radius: 12px;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #6c63ff, #48cfad);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 4px;
+    }
+    .subtitle { color: var(--muted); font-size: 0.82rem; margin-bottom: 24px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 16px;
+      width: 100%;
+      max-width: 900px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    .card h2 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    label { font-size: 0.78rem; color: var(--muted); display: block; margin-bottom: 4px; margin-top: 10px; }
+    label:first-of-type { margin-top: 0; }
+
+    input {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input:focus { border-color: var(--accent); }
+
+    button {
+      width: 100%;
+      margin-top: 14px;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    button:active { transform: scale(0.98); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-primary { background: linear-gradient(135deg, var(--accent), #8b5cf6); color: #fff; }
+    .btn-success { background: linear-gradient(135deg, var(--accent2), #38b2ac); color: #000; }
+    .btn-danger  { background: var(--danger); color: #fff; margin-top: 8px; }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      padding: 8px 12px;
+      border-radius: 8px;
+      margin-top: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
+      transition: background .3s;
+    }
+    .dot.connected { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
+    .dot.error     { background: var(--danger); }
+
+    .token-box {
+      margin-top: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.7rem;
+      color: var(--accent2);
+      word-break: break-all;
+      min-height: 36px;
+      font-family: monospace;
+    }
+
+    /* Chat */
+    .chat-wrapper { display: flex; flex-direction: column; height: 520px; }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 4px;
+      margin-bottom: 12px;
+    }
+    #messages::-webkit-scrollbar { width: 4px; }
+    #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .msg {
+      max-width: 78%;
+      padding: 10px 14px;
+      border-radius: 16px;
+      font-size: 0.84rem;
+      line-height: 1.45;
+      animation: fadeIn .2s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: none; } }
+
+    .msg.out {
+      align-self: flex-end;
+      background: linear-gradient(135deg, var(--accent), #8b5cf6);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.in {
+      align-self: flex-start;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+    .msg.sistema {
+      align-self: center;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.74rem;
+      font-style: italic;
+      border: none;
+      padding: 2px 0;
+    }
+    .msg.error-msg {
+      align-self: center;
+      background: rgba(255,107,107,0.12);
+      color: var(--danger);
+      border: 1px solid rgba(255,107,107,0.3);
+      font-size: 0.76rem;
+    }
+    .msg-meta { font-size: 0.68rem; color: rgba(255,255,255,0.45); margin-top: 3px; }
+    .msg.in .msg-meta { color: var(--muted); }
+
+    .send-row {
+      display: flex;
+      gap: 8px;
+    }
+    #msgInput {
+      flex: 1;
+      margin-top: 0;
+    }
+    #sendBtn {
+      width: auto;
+      margin-top: 0;
+      padding: 9px 20px;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+      .layout { grid-template-columns: 1fr; }
+      .chat-wrapper { height: 380px; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🔌 Servicio de Mensajería WebSocket</h1>
+  <p class="subtitle">Cliente de prueba — FastAPI + JWT</p>
+
+  <div class="layout">
+
+    <!-- Panel izquierdo: Configuración -->
+    <div>
+      <!-- Paso 1: Token -->
+      <div class="card" style="margin-bottom:16px">
+        <h2>Paso 1 — Obtener Token</h2>
+
+        <label for="idUsuario">idUsuario</label>
+        <input id="idUsuario" type="text" value="1" placeholder="Ej: 42" />
+
+        <label for="idEmpresa">idEmpresa</label>
+        <input id="idEmpresa" type="text" value="0" placeholder="Ej: 7" />
+
+        <button class="btn-primary" id="getTokenBtn" onclick="getToken()">🔑 Obtener Token</button>
+
+        <div class="token-box" id="tokenDisplay">El token aparecerá aquí…</div>
+      </div>
+
+      <!-- Paso 2: Conectar -->
+      <div class="card">
+        <h2>Paso 2 — Conectar WebSocket</h2>
+
+        <label for="wsUrl">URL del servidor</label>
+        <input id="wsUrl" type="text" value="ws://127.0.0.1:8005" />
+
+        <div class="status-bar">
+          <div class="dot" id="statusDot"></div>
+          <span id="statusText">Desconectado</span>
+        </div>
+
+        <button class="btn-success" id="connectBtn" onclick="connectWS()">⚡ Conectar</button>
+        <button class="btn-danger" id="disconnectBtn" onclick="disconnectWS()" disabled>✕ Desconectar</button>
+        <button style="width:100%;margin-top:8px;padding:9px;border:1px solid #2a2f45;border-radius:8px;background:#1e2235;color:#64748b;font-size:0.8rem;cursor:pointer;" onclick="testPing()">🔍 Test /ws/ping (sin JWT)</button>
+        <button style="width:100%;margin-top:4px;padding:9px;border:1px solid #2a2f45;border-radius:8px;background:#1e2235;color:#64748b;font-size:0.8rem;cursor:pointer;" onclick="testChatPath()">🔍 Test /ws/chat (token falso)</button>
+      </div>
+    </div>
+
+    <!-- Panel derecho: Chat -->
+    <div class="card chat-wrapper">
+      <h2>Chat en tiempo real</h2>
+
+      <div id="messages">
+        <div class="msg sistema">Los mensajes aparecerán aquí cuando te conectes…</div>
+      </div>
+
+      <div class="send-row">
+        <input id="msgInput" type="text" placeholder='Escribe un mensaje y presiona Enter…' disabled
+          onkeydown="if(event.key==='Enter') sendMsg()" />
+        <button class="btn-primary" id="sendBtn" onclick="sendMsg()" disabled>Enviar</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let ws = null;
+    let token = null;
+    let myUsuario = null;
+
+    // ── Obtener Token ─────────────────────────────────────────────────────────
+    async function getToken() {
+      const idUsuario = document.getElementById('idUsuario').value.trim();
+      const idEmpresa = document.getElementById('idEmpresa').value.trim();
+      const btn = document.getElementById('getTokenBtn');
+
+      if (!idUsuario || !idEmpresa) {
+        alert('Completa idUsuario e idEmpresa.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '⏳ Solicitando…';
+
+      try {
+        const base = document.getElementById('wsUrl').value.trim()
+          .replace('ws://', 'http://').replace('wss://', 'https://');
+
+        const res = await fetch(`${base}/auth/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idUsuario, idEmpresa })
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        token = data.access_token;
+        myUsuario = idUsuario;
+
+        const box = document.getElementById('tokenDisplay');
+        box.textContent = token;
+        box.style.color = '#48cfad';
+
+        addMsg('sistema', `✅ Token obtenido para usuario ${idUsuario} / empresa ${idEmpresa}`);
+      } catch (e) {
+        addMsg('error-msg', `❌ Error al obtener token: ${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔑 Obtener Token';
+      }
+    }
+
+    // ── Test de conectividad básica (sin JWT) ─────────────────────────────────
+    function testPing() {
+      const base = document.getElementById('wsUrl').value.trim();
+      const url  = `${base}/ws/ping`;
+      addMsg('sistema', `Probando WS sin JWT (/ws/ping): ${url}`);
+      const t = new WebSocket(url);
+      t.onopen    = ()  => addMsg('sistema', '✅ Ping OK: conexión abierta');
+      t.onmessage = (e) => addMsg('sistema', `✅ Ping OK: recibido "${e.data}"`);
+      t.onclose   = (e) => addMsg('sistema', `Ping cerrado — código ${e.code}`);
+      t.onerror   = ()  => addMsg('error-msg', '❌ Ping: error de conexión');
+    }
+
+    function testChatPath() {
+      const base      = document.getElementById('wsUrl').value.trim();
+      const idUsuario = document.getElementById('idUsuario').value.trim();
+      const idEmpresa = document.getElementById('idEmpresa').value.trim();
+      const url       = `${base}/ws/chat?idUsuario=${idUsuario}&idEmpresa=${idEmpresa}&token=TEST_INVALIDO`;
+      addMsg('sistema', `Probando ruta /ws/chat con token falso...`);
+      const t = new WebSocket(url);
+      t.onopen    = ()  => addMsg('sistema', '✅ Ruta /ws/chat: browser SÍ conecta (token rechazado por servidor es normal)');
+      t.onmessage = (e) => addMsg('sistema', `Recibido: ${e.data}`);
+      t.onclose   = (e) => addMsg('sistema', `Conexión cerrada — código ${e.code} ${e.reason}`);
+      t.onerror   = ()  => addMsg('error-msg', '❌ Ruta /ws/chat: browser NO puede conectar');
+    }
+
+    // ── Conectar WebSocket ────────────────────────────────────────────────────
+    function connectWS() {
+      if (!token) {
+        alert('Primero obtén un token (Paso 1).');
+        return;
+      }
+
+      // Cerrar conexión anterior si existe
+      if (ws) {
+        ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+        ws = null;
+      }
+
+      const idUsuario = document.getElementById('idUsuario').value.trim();
+      const idEmpresa = document.getElementById('idEmpresa').value.trim();
+      const base      = document.getElementById('wsUrl').value.trim();
+      const url       = `${base}/ws/chat?idUsuario=${idUsuario}&idEmpresa=${idEmpresa}&token=TEST_INVALIDO`;
+
+      addMsg('sistema', `Conectando a: ${url}`);
+      setTimeout(() => {
+        if (ws) {
+          const states = ['CONNECTING','OPEN','CLOSING','CLOSED'];
+          addMsg('sistema', `Estado WS después de 2s: ${states[ws.readyState]} (${ws.readyState})`);
+        }
+      }, 2000);
+      setStatus('connecting');
+
+      try {
+        ws = new WebSocket(url);
+      } catch(err) {
+        addMsg('error-msg', `❌ No se pudo crear WebSocket: ${err.message}`);
+        setStatus('error');
+        return;
+      }
+
+      ws.onopen = () => {
+        // Enviar token como primer mensaje en vez de en la URL
+        ws.send(JSON.stringify({ token: token }));
+        setStatus('connected');
+        document.getElementById('msgInput').disabled = false;
+        document.getElementById('sendBtn').disabled  = false;
+        document.getElementById('connectBtn').disabled    = true;
+        document.getElementById('disconnectBtn').disabled = false;
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.tipo === 'sistema') {
+          addMsg('sistema', data.mensaje);
+        } else if (data.tipo === 'error') {
+          addMsg('error-msg', `⚠️ ${data.mensaje}`);
+        } else {
+          const esPropio = data.de === myUsuario;
+          const hora = new Date(data.timestamp).toLocaleTimeString();
+          addMsg(
+            esPropio ? 'out' : 'in',
+            data.mensaje,
+            esPropio ? null : `Usuario ${data.de}`,
+            hora
+          );
+        }
+      };
+
+      ws.onclose = (e) => {
+        setStatus('disconnected');
+        resetUI();
+        addMsg('error-msg', `🔌 Conexión cerrada — código: ${e.code}${e.reason ? ' | razón: ' + e.reason : ' | (sin razón)'}`);
+      };
+
+      ws.onerror = (e) => {
+        setStatus('error');
+        addMsg('error-msg', `❌ Error WebSocket. Revisa que el servidor esté corriendo en ${url.split('/ws')[0]}`);
+      };
+    }
+
+    // ── Desconectar ───────────────────────────────────────────────────────────
+    function disconnectWS() {
+      if (ws) ws.close();
+    }
+
+    // ── Enviar mensaje ────────────────────────────────────────────────────────
+    function sendMsg() {
+      const input = document.getElementById('msgInput');
+      const text  = input.value.trim();
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+      ws.send(JSON.stringify({ mensaje: text }));
+      input.value = '';
+      input.focus();
+    }
+
+    // ── Helpers UI ────────────────────────────────────────────────────────────
+    function addMsg(tipo, texto, de = null, hora = null) {
+      const box = document.getElementById('messages');
+      const div = document.createElement('div');
+      div.className = `msg ${tipo}`;
+      div.innerHTML = `<div>${texto}</div>`;
+      if (de || hora) {
+        const meta = document.createElement('div');
+        meta.className = 'msg-meta';
+        meta.textContent = [de, hora].filter(Boolean).join(' · ');
+        div.appendChild(meta);
+      }
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function setStatus(state) {
+      const dot  = document.getElementById('statusDot');
+      const text = document.getElementById('statusText');
+      dot.className = 'dot';
+      const map = {
+        connected:    ['connected', '🟢 Conectado'],
+        disconnected: ['',          '⚫ Desconectado'],
+        connecting:   ['',          '⏳ Conectando…'],
+        error:        ['error',     '🔴 Error'],
+      };
+      if (map[state][0]) dot.classList.add(map[state][0]);
+      text.textContent = map[state][1];
+    }
+
+    function resetUI() {
+      document.getElementById('msgInput').disabled = true;
+      document.getElementById('sendBtn').disabled  = true;
+      document.getElementById('connectBtn').disabled    = false;
+      document.getElementById('disconnectBtn').disabled = true;
+    }
+  </script>
+</body>
+</html>

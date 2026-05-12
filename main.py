@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.api.routes.auth import router as auth_router
 from app.ws.routes import router as ws_router
@@ -15,6 +17,14 @@ app = FastAPI(
     ),
 )
 
+# CORS — permite que el test_chat.html pueda llamar a la API desde el navegador
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],      # En producción, reemplaza "*" por tu dominio
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Registrar routers
 app.include_router(auth_router)
 app.include_router(ws_router)
@@ -24,3 +34,8 @@ app.include_router(ws_router)
 def health_check():
     """Verifica que el servicio está activo."""
     return {"status": "ok", "service": "Mensajería WebSocket", "version": "2.0.0"}
+
+
+@app.get("/chat", tags=["Cliente de prueba"], include_in_schema=False)
+def test_chat():
+    return FileResponse("test_chat.html")

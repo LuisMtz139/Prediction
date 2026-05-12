@@ -22,8 +22,7 @@ class ConnectionManager:
         self.salas: dict[str, dict[str, WebSocket]] = defaultdict(dict)
 
     async def conectar(self, ws: WebSocket, idUsuario: str, idEmpresa: str) -> None:
-        """Acepta la conexión WebSocket y la registra en la sala de la empresa."""
-        await ws.accept()
+        """Registra la conexión WebSocket en la sala de la empresa (ya debe estar aceptada)."""
         self.salas[idEmpresa][idUsuario] = ws
 
     def desconectar(self, idUsuario: str, idEmpresa: str) -> None:

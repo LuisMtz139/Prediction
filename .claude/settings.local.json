@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uvicorn main:app --host 0.0.0.0 --port 8005 --reload)",
+      "Bash(Start-Sleep -Seconds 3)",
+      "Bash(curl -s http://localhost:8005/)"
+    ]
+  }
+}
