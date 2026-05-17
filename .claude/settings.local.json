@@ -4,7 +4,16 @@
       "Bash(uvicorn main:app --host 0.0.0.0 --port 8005 --reload)",
       "Bash(Start-Sleep -Seconds 3)",
       "Bash(curl -s http://localhost:8005/)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(python -m uvicorn main:app --host 0.0.0.0 --port 8005 --reload)",
+      "Bash(curl -s -X POST http://localhost:8005/auth/token -H \"Content-Type: application/json\" -d \"{\\\\\"idUsuario\\\\\":\\\\\"user1\\\\\",\\\\\"idEmpresa\\\\\":\\\\\"emp1\\\\\"}\")",
+      "Bash(curl *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8005)",
+      "Bash(taskkill /PID 17680 /F)",
+      "Bash(taskkill /PID 5612 /F)",
+      "Bash(Invoke-WebRequest -Uri \"http://localhost:8005/chat/responder\" -Method POST -ContentType \"application/json\" -Body '{\"mensaje\":\"test\"}')",
+      "Bash(Select-Object -ExpandProperty Content)"
     ]
   }
 }

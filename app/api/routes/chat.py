@@ -1,3 +1,6 @@
+from datetime import datetime
+from pathlib import Path
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -5,48 +8,97 @@ from app.ws.manager import manager
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
+CHAT_LOG = Path("chat_log.txt")
+
 
 class MensajeWebhook(BaseModel):
-    idUsuario: str
-    idEmpresa: str
+    idUsuario: str = ""
+    idEmpresa: str = ""
     mensaje: str
     historial: list[dict] = []
+
+
+def _escribir(linea: str) -> None:
+    with open(CHAT_LOG, "a", encoding="utf-8") as f:
+        f.write(linea + "\n")
 
 
 @router.post(
     "/responder",
     summary="Webhook — recibe mensaje del usuario y devuelve la respuesta",
-    description=(
-        "FastAPI llama a este endpoint cada vez que un usuario envía un mensaje. "
-        "Recibe el mensaje y el historial, y debe devolver JSON con campo `respuesta`."
-    ),
 )
 async def responder(body: MensajeWebhook):
-    """
-    Aquí defines tu lógica de respuesta.
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    Recibe:
-        {
-            "idUsuario": "user1",
-            "idEmpresa": "emp1",
-            "mensaje": "hola",
-            "historial": [ { "rol": "usuario", "contenido": "..." }, ... ]
-        }
+    # Guardar el mensaje del usuario
+    _escribir(f"[{ahora}] {body.idUsuario} → bot: {body.mensaje}")
 
-    Debe devolver:
-        { "respuesta": "tu respuesta aquí" }
-    """
+    # Respuesta de prueba — reemplaza esto con tu lógica real
+    respuesta = f"Hola {body.idUsuario}, recibí tu mensaje: '{body.mensaje}'"
 
-    # ── PON TU LÓGICA AQUÍ ────────────────────────────────────────────────────
-    # Ejemplos:
-    #   - Llamar a una IA (OpenAI, Claude, etc.)
-    #   - Consultar una base de datos
-    #   - Aplicar reglas de negocio
-    #   - Respuesta fija para pruebas:
+    # Guardar la respuesta
+    _escribir(f"[{ahora}] bot → {body.idUsuario}: {respuesta}")
+    _escribir("")  # línea en blanco entre turnos
 
-    respuesta = f"Recibí tu mensaje: '{body.mensaje}'. (Reemplaza esto con tu lógica)"
+    # Devolver la misma estructura que llegó + responseBot: True
+    return {
+        "idUsuario": body.idUsuario,
+        "idEmpresa": body.idEmpresa,
+        "mensaje": respuesta,
+        "responseBot": True,
+        "historial": body.historial,
+    }
 
-    return {"respuesta": respuesta}
+
+@router.get(
+    "/historial",
+    summary="Leer el historial del chat_log.txt estructurado por turnos",
+)
+def ver_historial():
+    if not CHAT_LOG.exists():
+        return {"turnos": []}
+
+    turnos = []
+    turno_actual: dict | None = None
+
+    for linea in CHAT_LOG.read_text(encoding="utf-8").splitlines():
+        if not linea.strip():
+            if turno_actual:
+                turnos.append(turno_actual)
+                turno_actual = None
+            continue
+
+        # Formato: [2026-05-16 21:50:35] 1 → bot: Hola
+        try:
+            hora = linea[1:20]
+            resto = linea[22:]
+            de, _, mensaje = resto.partition(": ")
+            remitente, _, _ = de.partition(" → ")
+
+            entrada = {"hora": hora, "de": remitente.strip(), "mensaje": mensaje.strip()}
+
+            if remitente.strip() == "bot":
+                if turno_actual:
+                    turno_actual["bot"] = entrada
+            else:
+                turno_actual = {"usuario": entrada, "bot": None}
+        except Exception:
+            continue
+
+    if turno_actual:
+        turnos.append(turno_actual)
+
+    return {"total_turnos": len(turnos), "turnos": turnos}
+
+
+@router.delete(
+    "/historial",
+    summary="Borrar el chat_log.txt",
+)
+def borrar_historial():
+    if CHAT_LOG.exists():
+        CHAT_LOG.unlink()
+    return {"ok": True}
 
 
 @router.get(

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -28,15 +29,16 @@ async def chat_websocket(
     token: str = Query(default=""),
 ):
     """
-    Chat WebSocket con webhook.
+    Chat WebSocket con sincronización estricta: un mensaje a la vez.
 
     Flujo:
-      1. Cliente conecta:   ws://host/ws/chat?idUsuario=X&idEmpresa=Y
-      2. Primer mensaje:    { "token": "eyJ..." }
-      3. Mensajes:          { "mensaje": "Hola" }
-      4. FastAPI llama a:   POST WEBHOOK_URL  →  { "idUsuario", "idEmpresa", "mensaje", "historial" }
-      5. Tu webhook responde { "respuesta": "..." }
-      6. Cliente recibe:    { "tipo": "respuesta", "mensaje": "..." }
+      1. ws://host/ws/chat?idUsuario=X&idEmpresa=Y
+      2. Primer mensaje:  { "token": "eyJ..." }
+      3. Mensajes:        { "mensaje": "Hola" }
+      4. Si envías otro mensaje antes de que el bot responda recibes:
+             { "tipo": "bloqueado", ... }
+      5. Cuando el bot responde:
+             { "tipo": "respuesta_bot", "respondido_por": "bot", "mensaje": "..." }
     """
 
     await ws.accept()
@@ -66,7 +68,6 @@ async def chat_websocket(
         await ws.close(code=1008)
         return
 
-    # ── Registrar y confirmar conexión ───────────────────────────────────────
     await manager.conectar(ws, idUsuario, idEmpresa)
     await ws.send_json({
         "tipo": "sistema",
@@ -75,10 +76,13 @@ async def chat_websocket(
     })
 
     historial: list[dict] = []
+    cola: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1)
+    libre = asyncio.Event()
+    libre.set()  # al inicio el usuario puede enviar
 
-    # ── Loop principal ───────────────────────────────────────────────────────
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+    # ── Corutina 1: escucha mensajes y valida sincronización ─────────────────
+    async def receptor():
+        try:
             while True:
                 try:
                     raw = await ws.receive_text()
@@ -92,7 +96,28 @@ async def chat_websocket(
                     await ws.send_json({"tipo": "error", "mensaje": "El campo 'mensaje' no puede estar vacío."})
                     continue
 
-                # Llamar al webhook con el mensaje y el historial
+                # Bloquear si el bot aún no respondió el mensaje anterior
+                if not libre.is_set():
+                    await ws.send_json({
+                        "tipo": "bloqueado",
+                        "mensaje": "Espera la respuesta del bot antes de enviar otro mensaje.",
+                    })
+                    continue
+
+                libre.clear()           # marcar como ocupado
+                await cola.put(texto)   # enviar al procesador
+
+        except WebSocketDisconnect:
+            await cola.put(None)        # señal de cierre para el procesador
+
+    # ── Corutina 2: llama al webhook y devuelve la respuesta ─────────────────
+    async def procesador():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
+                texto = await cola.get()
+                if texto is None:
+                    break
+
                 try:
                     resp = await client.post(
                         settings.WEBHOOK_URL,
@@ -105,26 +130,27 @@ async def chat_websocket(
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                    respuesta_texto = data.get("respuesta") or data.get("mensaje") or str(data)
+
                 except httpx.HTTPStatusError as e:
                     await ws.send_json({"tipo": "error", "mensaje": f"Webhook respondió {e.response.status_code}."})
+                    libre.set()
                     continue
                 except Exception as e:
                     await ws.send_json({"tipo": "error", "mensaje": f"No se pudo contactar el webhook: {e}"})
+                    libre.set()
                     continue
 
-                # Actualizar historial
-                historial.append({"rol": "usuario",    "contenido": texto})
-                historial.append({"rol": "asistente", "contenido": respuesta_texto})
+                # Actualizar historial interno con el texto del bot
+                historial.append({"rol": "usuario",   "contenido": texto})
+                historial.append({"rol": "asistente", "contenido": data.get("mensaje", "")})
 
-                # Enviar respuesta al usuario
-                await ws.send_json({
-                    "tipo": "respuesta",
-                    "mensaje": respuesta_texto,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                # Mandar la respuesta del webhook tal cual al usuario
+                await ws.send_json(data)
 
-    except WebSocketDisconnect:
-        pass
+                libre.set()  # usuario puede volver a escribir
+
+    # ── Correr ambas corutinas en paralelo ───────────────────────────────────
+    try:
+        await asyncio.gather(receptor(), procesador())
     finally:
         manager.desconectar(idUsuario, idEmpresa)
