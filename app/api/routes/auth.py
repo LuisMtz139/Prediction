@@ -7,15 +7,15 @@ router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
 
 class TokenRequest(BaseModel):
-    idUsuario: str
-    idEmpresa: str
+    numeroCelular: str
+    numeroEmpresa: str
 
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    idUsuario: str
-    idEmpresa: str
+    numeroCelular: str
+    numeroEmpresa: str
 
 
 @router.post(
@@ -23,22 +23,14 @@ class TokenResponse(BaseModel):
     response_model=TokenResponse,
     summary="Obtener token JWT",
     description=(
-        "Genera un token JWT firmado con `idUsuario` e `idEmpresa`. "
-        "Este token debe enviarse como query param `token` al conectar al WebSocket."
+        "Genera un token JWT firmado con `numeroCelular` y `numeroEmpresa`. "
+        "Úsalo para conectarte al WebSocket y como hash en la url_respuesta del archivo."
     ),
 )
 def obtener_token(body: TokenRequest) -> TokenResponse:
-    """
-    Endpoint REST para que el cliente obtenga su token JWT antes de conectarse al WebSocket.
-
-    Flujo esperado:
-    1. Cliente llama a POST /auth/token con { idUsuario, idEmpresa }
-    2. Guarda el access_token recibido
-    3. Se conecta a ws://host/ws/chat?idUsuario=X&idEmpresa=Y&token=ACCESS_TOKEN
-    """
-    token = crear_token(body.idUsuario, body.idEmpresa)
+    token = crear_token(body.numeroCelular, body.numeroEmpresa)
     return TokenResponse(
         access_token=token,
-        idUsuario=body.idUsuario,
-        idEmpresa=body.idEmpresa,
+        numeroCelular=body.numeroCelular,
+        numeroEmpresa=body.numeroEmpresa,
     )

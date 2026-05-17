@@ -1,110 +1,54 @@
-from datetime import datetime
-from pathlib import Path
-
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.security.jwt_handler import validar_token
 from app.ws.manager import manager
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
-CHAT_LOG = Path("chat_log.txt")
 
-
-class MensajeWebhook(BaseModel):
-    idUsuario: str = ""
-    idEmpresa: str = ""
-    mensaje: str
-    historial: list[dict] = []
-
-
-def _escribir(linea: str) -> None:
-    with open(CHAT_LOG, "a", encoding="utf-8") as f:
-        f.write(linea + "\n")
+class RespuestaBot(BaseModel):
+    respuesta: str
 
 
 @router.post(
     "/responder",
-    summary="Webhook — recibe mensaje del usuario y devuelve la respuesta",
+    summary="El bot manda su respuesta aquí",
+    description=(
+        "El bot llama a este endpoint con la URL que encontró en el archivo .txt. "
+        "Se valida el token para confirmar que tiene permiso de responder a ese usuario."
+    ),
 )
-async def responder(body: MensajeWebhook):
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+async def responder(
+    numeroCelular: str = Query(..., description="Número de celular del usuario"),
+    numeroEmpresa: str = Query(..., description="Número/ID de la empresa"),
+    token: str = Query(..., description="JWT del usuario para validar permiso"),
+    body: RespuestaBot = ...,
+):
+    # Validar que el token pertenece a este usuario
+    try:
+        payload = validar_token(token)
+        if payload.get("sub") != numeroCelular or payload.get("empresa") != numeroEmpresa:
+            raise HTTPException(status_code=403, detail="Token no coincide con numeroCelular o numeroEmpresa.")
+    except Exception as e:
+        raise HTTPException(status_code=403, detail=f"Token inválido: {e}")
 
-    # Guardar el mensaje del usuario
-    _escribir(f"[{ahora}] {body.idUsuario} → bot: {body.mensaje}")
+    # Verificar que el usuario está conectado esperando respuesta
+    if not manager.esta_conectado(numeroCelular, numeroEmpresa):
+        raise HTTPException(status_code=404, detail=f"El usuario {numeroCelular} no está conectado.")
 
-    # Respuesta de prueba — reemplaza esto con tu lógica real
-    respuesta = f"Hola {body.idUsuario}, recibí tu mensaje: '{body.mensaje}'"
+    # Entregar la respuesta al WebSocket del usuario
+    entregado = await manager.entregar_respuesta(numeroCelular, numeroEmpresa, body.respuesta)
+    if not entregado:
+        raise HTTPException(status_code=404, detail="El usuario no está esperando respuesta.")
 
-    # Guardar la respuesta
-    _escribir(f"[{ahora}] bot → {body.idUsuario}: {respuesta}")
-    _escribir("")  # línea en blanco entre turnos
-
-    # Devolver la misma estructura que llegó + responseBot: True
-    return {
-        "idUsuario": body.idUsuario,
-        "idEmpresa": body.idEmpresa,
-        "mensaje": respuesta,
-        "responseBot": True,
-        "historial": body.historial,
-    }
-
-
-@router.get(
-    "/historial",
-    summary="Leer el historial del chat_log.txt estructurado por turnos",
-)
-def ver_historial():
-    if not CHAT_LOG.exists():
-        return {"turnos": []}
-
-    turnos = []
-    turno_actual: dict | None = None
-
-    for linea in CHAT_LOG.read_text(encoding="utf-8").splitlines():
-        if not linea.strip():
-            if turno_actual:
-                turnos.append(turno_actual)
-                turno_actual = None
-            continue
-
-        # Formato: [2026-05-16 21:50:35] 1 → bot: Hola
-        try:
-            hora = linea[1:20]
-            resto = linea[22:]
-            de, _, mensaje = resto.partition(": ")
-            remitente, _, _ = de.partition(" → ")
-
-            entrada = {"hora": hora, "de": remitente.strip(), "mensaje": mensaje.strip()}
-
-            if remitente.strip() == "bot":
-                if turno_actual:
-                    turno_actual["bot"] = entrada
-            else:
-                turno_actual = {"usuario": entrada, "bot": None}
-        except Exception:
-            continue
-
-    if turno_actual:
-        turnos.append(turno_actual)
-
-    return {"total_turnos": len(turnos), "turnos": turnos}
-
-
-@router.delete(
-    "/historial",
-    summary="Borrar el chat_log.txt",
-)
-def borrar_historial():
-    if CHAT_LOG.exists():
-        CHAT_LOG.unlink()
-    return {"ok": True}
+    return {"ok": True, "numeroCelular": numeroCelular, "numeroEmpresa": numeroEmpresa}
 
 
 @router.get(
     "/conectados",
     summary="Ver usuarios conectados por empresa",
 )
-def usuarios_conectados(idEmpresa: str):
-    usuarios = manager.usuarios_conectados(idEmpresa)
-    return {"idEmpresa": idEmpresa, "usuarios": usuarios, "total": len(usuarios)}
+def usuarios_conectados(numeroEmpresa: str):
+    usuarios = manager.usuarios_conectados(numeroEmpresa)
+    return {"numeroEmpresa": numeroEmpresa, "usuarios": usuarios, "total": len(usuarios)}

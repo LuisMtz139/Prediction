@@ -1,8 +1,8 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
-import httpx
 import jwt
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
@@ -12,10 +12,12 @@ from app.ws.manager import manager
 
 router = APIRouter(tags=["WebSocket"])
 
+CHATS_DIR = Path("chats")
+CHATS_DIR.mkdir(exist_ok=True)
+
 
 @router.websocket("/ws/ping")
 async def ping(ws: WebSocket):
-    """Endpoint de diagnóstico — sin JWT, solo verifica conectividad WebSocket."""
     await ws.accept()
     await ws.send_text("pong")
     await ws.close()
@@ -24,21 +26,20 @@ async def ping(ws: WebSocket):
 @router.websocket("/ws/chat")
 async def chat_websocket(
     ws: WebSocket,
-    idUsuario: str = Query(..., description="ID del usuario que se conecta"),
-    idEmpresa: str = Query(..., description="ID de la empresa"),
+    numeroCelular: str = Query(..., description="Número de celular del usuario"),
+    numeroEmpresa: str = Query(..., description="Número/ID de la empresa"),
     token: str = Query(default=""),
 ):
     """
-    Chat WebSocket con sincronización estricta: un mensaje a la vez.
+    Chat WebSocket con archivo por usuario.
 
     Flujo:
-      1. ws://host/ws/chat?idUsuario=X&idEmpresa=Y
+      1. ws://host/ws/chat?numeroCelular=123&numeroEmpresa=456
       2. Primer mensaje:  { "token": "eyJ..." }
       3. Mensajes:        { "mensaje": "Hola" }
-      4. Si envías otro mensaje antes de que el bot responda recibes:
-             { "tipo": "bloqueado", ... }
-      5. Cuando el bot responde:
-             { "tipo": "respuesta_bot", "respondido_por": "bot", "mensaje": "..." }
+      4. FastAPI crea/sobreescribe chats/123-456.txt con el mensaje y url_respuesta
+      5. El bot llama POST a esa url_respuesta con { "respuesta": "..." }
+      6. Usuario recibe la respuesta por WebSocket
     """
 
     await ws.accept()
@@ -55,8 +56,8 @@ async def chat_websocket(
 
     try:
         payload = validar_token(token)
-        if payload.get("sub") != idUsuario or payload.get("empresa") != idEmpresa:
-            await ws.send_json({"tipo": "error", "mensaje": "Token no coincide con idUsuario o idEmpresa."})
+        if payload.get("sub") != numeroCelular or payload.get("empresa") != numeroEmpresa:
+            await ws.send_json({"tipo": "error", "mensaje": "Token no coincide con numeroCelular o numeroEmpresa."})
             await ws.close(code=1008)
             return
     except jwt.ExpiredSignatureError:
@@ -68,19 +69,19 @@ async def chat_websocket(
         await ws.close(code=1008)
         return
 
-    await manager.conectar(ws, idUsuario, idEmpresa)
+    await manager.conectar(ws, numeroCelular, numeroEmpresa)
     await ws.send_json({
         "tipo": "sistema",
-        "mensaje": f"Conectado como {idUsuario}. Escribe tu mensaje.",
+        "mensaje": f"Conectado como {numeroCelular}. Escribe tu mensaje.",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
-    historial: list[dict] = []
-    cola: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1)
     libre = asyncio.Event()
-    libre.set()  # al inicio el usuario puede enviar
+    libre.set()
 
     # ── Corutina 1: escucha mensajes y valida sincronización ─────────────────
+    cola: asyncio.Queue[str | None] = asyncio.Queue()
+
     async def receptor():
         try:
             while True:
@@ -96,7 +97,6 @@ async def chat_websocket(
                     await ws.send_json({"tipo": "error", "mensaje": "El campo 'mensaje' no puede estar vacío."})
                     continue
 
-                # Bloquear si el bot aún no respondió el mensaje anterior
                 if not libre.is_set():
                     await ws.send_json({
                         "tipo": "bloqueado",
@@ -104,53 +104,58 @@ async def chat_websocket(
                     })
                     continue
 
-                libre.clear()           # marcar como ocupado
-                await cola.put(texto)   # enviar al procesador
+                libre.clear()
+                await cola.put(texto)
 
         except WebSocketDisconnect:
-            await cola.put(None)        # señal de cierre para el procesador
+            await cola.put(None)
 
-    # ── Corutina 2: llama al webhook y devuelve la respuesta ─────────────────
+    # ── Corutina 2: escribe el archivo y espera la respuesta del bot ──────────
     async def procesador():
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            while True:
-                texto = await cola.get()
-                if texto is None:
-                    break
+        archivo = CHATS_DIR / f"{numeroCelular}-{numeroEmpresa}.txt"
+        url_respuesta = (
+            f"{settings.BASE_URL}/chat/responder"
+            f"?numeroCelular={numeroCelular}"
+            f"&numeroEmpresa={numeroEmpresa}"
+            f"&token={token}"
+        )
 
-                try:
-                    resp = await client.post(
-                        settings.WEBHOOK_URL,
-                        json={
-                            "idUsuario": idUsuario,
-                            "idEmpresa": idEmpresa,
-                            "mensaje": texto,
-                            "historial": historial.copy(),
-                        },
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
+        while True:
+            texto = await cola.get()
+            if texto is None:
+                break
 
-                except httpx.HTTPStatusError as e:
-                    await ws.send_json({"tipo": "error", "mensaje": f"Webhook respondió {e.response.status_code}."})
-                    libre.set()
-                    continue
-                except Exception as e:
-                    await ws.send_json({"tipo": "error", "mensaje": f"No se pudo contactar el webhook: {e}"})
-                    libre.set()
-                    continue
+            # Sobreescribir el archivo con el mensaje actual
+            archivo.write_text(
+                json.dumps({
+                    "numeroCelular": numeroCelular,
+                    "numeroEmpresa": numeroEmpresa,
+                    "mensaje": texto,
+                    "url_respuesta": url_respuesta,
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
-                # Actualizar historial interno con el texto del bot
-                historial.append({"rol": "usuario",   "contenido": texto})
-                historial.append({"rol": "asistente", "contenido": data.get("mensaje", "")})
+            await ws.send_json({
+                "tipo": "enviado",
+                "mensaje": texto,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
 
-                # Mandar la respuesta del webhook tal cual al usuario
-                await ws.send_json(data)
+            # Esperar que el bot llame a url_respuesta
+            respuesta = await manager.esperar_respuesta(numeroCelular, numeroEmpresa)
 
-                libre.set()  # usuario puede volver a escribir
+            await ws.send_json({
+                "numeroCelular": numeroCelular,
+                "numeroEmpresa": numeroEmpresa,
+                "mensaje": respuesta,
+                "responseBot": True,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
 
-    # ── Correr ambas corutinas en paralelo ───────────────────────────────────
+            libre.set()
+
     try:
         await asyncio.gather(receptor(), procesador())
     finally:
-        manager.desconectar(idUsuario, idEmpresa)
+        manager.desconectar(numeroCelular, numeroEmpresa)
