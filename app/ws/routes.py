@@ -1,9 +1,11 @@
 import json
 from datetime import datetime, timezone
 
+import httpx
 import jwt
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from app.core.config import settings
 from app.security.jwt_handler import validar_token
 from app.ws.manager import manager
 
@@ -26,14 +28,15 @@ async def chat_websocket(
     token: str = Query(default=""),
 ):
     """
-    Chat WebSocket individual.
+    Chat WebSocket con webhook.
 
     Flujo:
-      1. Cliente conecta:  ws://host/ws/chat?idUsuario=X&idEmpresa=Y
-      2. Primer mensaje:   { "token": "eyJ..." }
-      3. Mensajes:         { "mensaje": "Hola" }
-      4. Alguien llama a:  POST /chat/responder?idUsuario=X  { "respuesta": "..." }
-      5. Cliente recibe:   { "tipo": "respuesta", "mensaje": "..." }
+      1. Cliente conecta:   ws://host/ws/chat?idUsuario=X&idEmpresa=Y
+      2. Primer mensaje:    { "token": "eyJ..." }
+      3. Mensajes:          { "mensaje": "Hola" }
+      4. FastAPI llama a:   POST WEBHOOK_URL  →  { "idUsuario", "idEmpresa", "mensaje", "historial" }
+      5. Tu webhook responde { "respuesta": "..." }
+      6. Cliente recibe:    { "tipo": "respuesta", "mensaje": "..." }
     """
 
     await ws.accept()
@@ -71,38 +74,55 @@ async def chat_websocket(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
+    historial: list[dict] = []
+
     # ── Loop principal ───────────────────────────────────────────────────────
     try:
-        while True:
-            # 1. Recibir mensaje del usuario
-            try:
-                raw = await ws.receive_text()
-                body = json.loads(raw)
-            except json.JSONDecodeError:
-                await ws.send_json({"tipo": "error", "mensaje": "Envía JSON con campo 'mensaje'."})
-                continue
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
+                try:
+                    raw = await ws.receive_text()
+                    body = json.loads(raw)
+                except json.JSONDecodeError:
+                    await ws.send_json({"tipo": "error", "mensaje": "Envía JSON con campo 'mensaje'."})
+                    continue
 
-            texto = body.get("mensaje", "").strip()
-            if not texto:
-                await ws.send_json({"tipo": "error", "mensaje": "El campo 'mensaje' no puede estar vacío."})
-                continue
+                texto = body.get("mensaje", "").strip()
+                if not texto:
+                    await ws.send_json({"tipo": "error", "mensaje": "El campo 'mensaje' no puede estar vacío."})
+                    continue
 
-            # 2. Confirmar que se recibió y queda en espera
-            await ws.send_json({
-                "tipo": "recibido",
-                "mensaje": texto,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+                # Llamar al webhook con el mensaje y el historial
+                try:
+                    resp = await client.post(
+                        settings.WEBHOOK_URL,
+                        json={
+                            "idUsuario": idUsuario,
+                            "idEmpresa": idEmpresa,
+                            "mensaje": texto,
+                            "historial": historial.copy(),
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    respuesta_texto = data.get("respuesta") or data.get("mensaje") or str(data)
+                except httpx.HTTPStatusError as e:
+                    await ws.send_json({"tipo": "error", "mensaje": f"Webhook respondió {e.response.status_code}."})
+                    continue
+                except Exception as e:
+                    await ws.send_json({"tipo": "error", "mensaje": f"No se pudo contactar el webhook: {e}"})
+                    continue
 
-            # 3. Esperar la respuesta que llegue por POST /chat/responder
-            respuesta = await manager.esperar_respuesta(idUsuario)
+                # Actualizar historial
+                historial.append({"rol": "usuario",    "contenido": texto})
+                historial.append({"rol": "asistente", "contenido": respuesta_texto})
 
-            # 4. Enviar la respuesta al usuario
-            await ws.send_json({
-                "tipo": "respuesta",
-                "mensaje": respuesta,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+                # Enviar respuesta al usuario
+                await ws.send_json({
+                    "tipo": "respuesta",
+                    "mensaje": respuesta_texto,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
 
     except WebSocketDisconnect:
         pass

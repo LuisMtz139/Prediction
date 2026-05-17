@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.ws.manager import manager
@@ -6,27 +6,47 @@ from app.ws.manager import manager
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
-class RespuestaBody(BaseModel):
-    respuesta: str
+class MensajeWebhook(BaseModel):
+    idUsuario: str
+    idEmpresa: str
+    mensaje: str
+    historial: list[dict] = []
 
 
 @router.post(
     "/responder",
-    summary="Enviar respuesta a un usuario conectado",
+    summary="Webhook — recibe mensaje del usuario y devuelve la respuesta",
     description=(
-        "Deposita una respuesta para el usuario indicado. "
-        "El usuario debe estar conectado al WebSocket y haber enviado un mensaje previo."
+        "FastAPI llama a este endpoint cada vez que un usuario envía un mensaje. "
+        "Recibe el mensaje y el historial, y debe devolver JSON con campo `respuesta`."
     ),
 )
-async def responder(idUsuario: str, body: RespuestaBody):
-    if not manager.esta_conectado(idUsuario):
-        raise HTTPException(status_code=404, detail=f"Usuario '{idUsuario}' no está conectado.")
+async def responder(body: MensajeWebhook):
+    """
+    Aquí defines tu lógica de respuesta.
 
-    enviado = await manager.entregar_respuesta(idUsuario, body.respuesta)
-    if not enviado:
-        raise HTTPException(status_code=404, detail=f"Usuario '{idUsuario}' no tiene mensajes pendientes.")
+    Recibe:
+        {
+            "idUsuario": "user1",
+            "idEmpresa": "emp1",
+            "mensaje": "hola",
+            "historial": [ { "rol": "usuario", "contenido": "..." }, ... ]
+        }
 
-    return {"ok": True, "idUsuario": idUsuario}
+    Debe devolver:
+        { "respuesta": "tu respuesta aquí" }
+    """
+
+    # ── PON TU LÓGICA AQUÍ ────────────────────────────────────────────────────
+    # Ejemplos:
+    #   - Llamar a una IA (OpenAI, Claude, etc.)
+    #   - Consultar una base de datos
+    #   - Aplicar reglas de negocio
+    #   - Respuesta fija para pruebas:
+
+    respuesta = f"Recibí tu mensaje: '{body.mensaje}'. (Reemplaza esto con tu lógica)"
+
+    return {"respuesta": respuesta}
 
 
 @router.get(
