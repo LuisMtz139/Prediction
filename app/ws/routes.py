@@ -22,45 +22,32 @@ async def ping(ws: WebSocket):
 async def chat_websocket(
     ws: WebSocket,
     idUsuario: str = Query(..., description="ID del usuario que se conecta"),
-    idEmpresa: str = Query(..., description="ID de la empresa (sala de chat)"),
-    token: str = Query(default=""),  # ignorado en URL; el JWT real llega en el primer mensaje
+    idEmpresa: str = Query(..., description="ID de la empresa"),
+    token: str = Query(default=""),
 ):
     """
-    Endpoint WebSocket de mensajería.
+    Chat WebSocket individual.
 
-    Conexión:
-        ws://host/ws/chat?idUsuario=42&idEmpresa=7
-
-    Primer mensaje que DEBE enviar el cliente (autenticación):
-        { "token": "eyJ..." }
-
-    Mensajes siguientes:
-        { "mensaje": "Hola a todos" }
-
-    Mensajes que recibirán todos los conectados de la misma empresa:
-        {
-            "tipo": "mensaje",
-            "de": "42",
-            "idEmpresa": "7",
-            "mensaje": "Hola a todos",
-            "timestamp": "2025-05-11T21:00:00+00:00"
-        }
+    Flujo:
+      1. Cliente conecta:  ws://host/ws/chat?idUsuario=X&idEmpresa=Y
+      2. Primer mensaje:   { "token": "eyJ..." }
+      3. Mensajes:         { "mensaje": "Hola" }
+      4. Alguien llama a:  POST /chat/responder?idUsuario=X  { "respuesta": "..." }
+      5. Cliente recibe:   { "tipo": "respuesta", "mensaje": "..." }
     """
 
-    # ── PASO 1: Aceptar la conexión para poder intercambiar mensajes ──────────
     await ws.accept()
 
-    # ── PASO 2: Esperar el primer mensaje con el token JWT ────────────────────
+    # ── Autenticación ────────────────────────────────────────────────────────
     try:
         raw_auth = await ws.receive_text()
         auth = json.loads(raw_auth)
         token = auth.get("token", "")
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         await ws.send_json({"tipo": "error", "mensaje": "Primer mensaje debe ser JSON con campo 'token'."})
         await ws.close(code=1008)
         return
 
-    # ── PASO 3: Validar el token JWT ──────────────────────────────────────────
     try:
         payload = validar_token(token)
         if payload.get("sub") != idUsuario or payload.get("empresa") != idEmpresa:
@@ -76,28 +63,23 @@ async def chat_websocket(
         await ws.close(code=1008)
         return
 
-    # ── PASO 4: Registrar la conexión y notificar a la sala ──────────────────
+    # ── Registrar y confirmar conexión ───────────────────────────────────────
     await manager.conectar(ws, idUsuario, idEmpresa)
+    await ws.send_json({
+        "tipo": "sistema",
+        "mensaje": f"Conectado como {idUsuario}. Escribe tu mensaje.",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
 
-    await manager.broadcast_empresa(
-        idEmpresa,
-        {
-            "tipo": "sistema",
-            "mensaje": f"Usuario {idUsuario} se conectó",
-            "idEmpresa": idEmpresa,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        },
-    )
-
-    # ── PASO 5: Escuchar mensajes ─────────────────────────────────────────────
+    # ── Loop principal ───────────────────────────────────────────────────────
     try:
         while True:
-            raw = await ws.receive_text()
-
+            # 1. Recibir mensaje del usuario
             try:
+                raw = await ws.receive_text()
                 body = json.loads(raw)
             except json.JSONDecodeError:
-                await ws.send_json({"tipo": "error", "mensaje": "Formato inválido. Envía JSON con campo 'mensaje'."})
+                await ws.send_json({"tipo": "error", "mensaje": "Envía JSON con campo 'mensaje'."})
                 continue
 
             texto = body.get("mensaje", "").strip()
@@ -105,23 +87,24 @@ async def chat_websocket(
                 await ws.send_json({"tipo": "error", "mensaje": "El campo 'mensaje' no puede estar vacío."})
                 continue
 
-            mensaje_out = {
-                "tipo": "mensaje",
-                "de": idUsuario,
-                "idEmpresa": idEmpresa,
+            # 2. Confirmar que se recibió y queda en espera
+            await ws.send_json({
+                "tipo": "recibido",
                 "mensaje": texto,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            await manager.broadcast_empresa(idEmpresa, mensaje_out)
+            })
+
+            # 3. Esperar la respuesta que llegue por POST /chat/responder
+            respuesta = await manager.esperar_respuesta(idUsuario)
+
+            # 4. Enviar la respuesta al usuario
+            await ws.send_json({
+                "tipo": "respuesta",
+                "mensaje": respuesta,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
 
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.desconectar(idUsuario, idEmpresa)
-        await manager.broadcast_empresa(
-            idEmpresa,
-            {
-                "tipo": "sistema",
-                "mensaje": f"Usuario {idUsuario} se desconectó",
-                "idEmpresa": idEmpresa,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-        )

@@ -7,8 +7,7 @@ class MensajeIn(BaseModel):
 
 
 class MensajeOut(BaseModel):
-    """Estructura del mensaje que se emite a todos los conectados."""
-    de: str          # idUsuario del remitente
-    idEmpresa: str   # empresa a la que pertenece la sala
+    """Estructura de la respuesta que recibe el usuario desde el servicio externo."""
+    tipo: str        # "respuesta" | "error" | "sistema"
     mensaje: str     # contenido del mensaje
     timestamp: str   # fecha/hora UTC en ISO 8601
