@@ -12,8 +12,8 @@ from app.ws.manager import manager
 
 router = APIRouter(tags=["WebSocket"])
 
-CHATS_DIR = Path("chats")
-CHATS_DIR.mkdir(exist_ok=True)
+CHATS_DIR = Path(r"C:\MsgsWhatsAppUltraMsg\92937")
+CHATS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.websocket("/ws/ping")
@@ -112,7 +112,7 @@ async def chat_websocket(
 
     # ── Corutina 2: escribe el archivo y espera la respuesta del bot ──────────
     async def procesador():
-        archivo = CHATS_DIR / f"{numeroCelular}-{numeroEmpresa}.txt"
+        archivo = CHATS_DIR / f"{numeroCelular}-{numeroEmpresa}.app"
         url_respuesta = (
             f"{settings.BASE_URL}/chat/responder"
             f"?numeroCelular={numeroCelular}"
