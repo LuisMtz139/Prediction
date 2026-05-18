@@ -52,3 +52,30 @@ async def responder(
 def usuarios_conectados(numeroEmpresa: str):
     usuarios = manager.usuarios_conectados(numeroEmpresa)
     return {"numeroEmpresa": numeroEmpresa, "usuarios": usuarios, "total": len(usuarios)}
+
+
+@router.post(
+    "/test-responder",
+    summary="[PRUEBA] Simula la respuesta del bot",
+    description=(
+        "Endpoint de prueba para simular que el bot responde. "
+        "Envía un mensaje fijo al usuario conectado sin necesitar token. "
+        "Úsalo para verificar que el WebSocket funciona correctamente."
+    ),
+)
+async def test_responder(
+    numeroCelular: str = Query(..., description="Número de celular del usuario"),
+    numeroEmpresa: str = Query(..., description="Número/ID de la empresa"),
+    respuesta: str = Query(default="Hola, ¿en qué puedo ayudarte? Soy tu asistente virtual."),
+):
+    if not manager.esta_conectado(numeroCelular, numeroEmpresa):
+        raise HTTPException(
+            status_code=404,
+            detail=f"El usuario {numeroCelular} no está conectado o no ha enviado ningún mensaje."
+        )
+
+    entregado = await manager.entregar_respuesta(numeroCelular, numeroEmpresa, respuesta)
+    if not entregado:
+        raise HTTPException(status_code=404, detail="El usuario no está esperando respuesta.")
+
+    return {"ok": True, "numeroCelular": numeroCelular, "respuestaEnviada": respuesta}
