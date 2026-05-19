@@ -28,16 +28,18 @@ async def chat_websocket(
     ws: WebSocket,
     numeroCelular: str = Query(..., description="Número de celular del usuario"),
     numeroEmpresa: str = Query(..., description="Número/ID de la empresa"),
+    idUsuario: str = Query(..., description="ID del usuario en el sistema"),
     token: str = Query(default=""),
 ):
     """
     Chat WebSocket con archivo por usuario.
 
     Flujo:
-      1. ws://host/ws/chat?numeroCelular=123&numeroEmpresa=456
+      1. ws://host/ws/chat?numeroCelular=123&numeroEmpresa=00001&idUsuario=-4
       2. Primer mensaje:  { "token": "eyJ..." }
       3. Mensajes:        { "mensaje": "Hola" }
-      4. FastAPI crea/sobreescribe chats/123-456.txt con el mensaje y url_respuesta
+      4. FastAPI crea/sobreescribe chats/000010.txt con el mensaje y url_respuesta
+         (formato: {numeroEmpresa}{idUsuario}.txt)
       5. El bot llama POST a esa url_respuesta con { "respuesta": "..." }
       6. Usuario recibe la respuesta por WebSocket
     """
@@ -56,8 +58,12 @@ async def chat_websocket(
 
     try:
         payload = validar_token(token)
-        if payload.get("sub") != numeroCelular or payload.get("empresa") != numeroEmpresa:
-            await ws.send_json({"tipo": "error", "mensaje": "Token no coincide con numeroCelular o numeroEmpresa."})
+        if (
+            payload.get("sub") != numeroCelular
+            or payload.get("empresa") != numeroEmpresa
+            or payload.get("idUsuario") != idUsuario
+        ):
+            await ws.send_json({"tipo": "error", "mensaje": "Token no coincide con numeroCelular, numeroEmpresa o idUsuario."})
             await ws.close(code=1008)
             return
     except jwt.ExpiredSignatureError:
@@ -112,7 +118,7 @@ async def chat_websocket(
 
     # ── Corutina 2: escribe el archivo y espera la respuesta del bot ──────────
     async def procesador():
-        archivo = CHATS_DIR / f"{numeroCelular}-{numeroEmpresa}.app"
+        archivo = CHATS_DIR / f"{numeroEmpresa}{idUsuario}.app"
         url_respuesta = (
             f"{settings.BASE_URL}/chat/responder"
             f"?numeroCelular={numeroCelular}"
@@ -130,6 +136,7 @@ async def chat_websocket(
                 json.dumps({
                     "numeroCelular": numeroCelular,
                     "numeroEmpresa": numeroEmpresa,
+                    "idUsuario": idUsuario,
                     "mensaje": texto,
                     "url_respuesta": url_respuesta,
                 }, ensure_ascii=False, indent=2),
