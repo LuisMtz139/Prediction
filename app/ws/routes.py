@@ -118,7 +118,7 @@ async def chat_websocket(
 
     # ── Corutina 2: escribe el archivo y espera la respuesta del bot ──────────
     async def procesador():
-        archivo = CHATS_DIR / f"{numeroEmpresa}{idUsuario}.app"
+        archivo = CHATS_DIR / f"{numeroEmpresa}{idUsuario}.txt"
         url_respuesta = (
             f"{settings.BASE_URL}/chat/responder"
             f"?numeroCelular={numeroCelular}"
@@ -134,9 +134,6 @@ async def chat_websocket(
             # Sobreescribir el archivo con el mensaje actual
             archivo.write_text(
                 json.dumps({
-                    "numeroCelular": numeroCelular,
-                    "numeroEmpresa": numeroEmpresa,
-                    "idUsuario": idUsuario,
                     "mensaje": texto,
                     "url_respuesta": url_respuesta,
                 }, ensure_ascii=False, indent=2),
