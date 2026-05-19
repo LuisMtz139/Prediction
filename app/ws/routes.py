@@ -15,6 +15,13 @@ router = APIRouter(tags=["WebSocket"])
 CHATS_DIR = Path(r"C:\MsgsWhatsAppUltraMsg\92937")
 CHATS_DIR.mkdir(parents=True, exist_ok=True)
 
+CHAT_LOG = Path(__file__).parents[2] / "chat_log.txt"
+
+def log_chat(msg: str):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(CHAT_LOG, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {msg}\n")
+
 
 @router.websocket("/ws/ping")
 async def ping(ws: WebSocket):
@@ -118,6 +125,7 @@ async def chat_websocket(
 
     # ── Corutina 2: escribe el archivo y espera la respuesta del bot ──────────
     async def procesador():
+        CHATS_DIR.mkdir(parents=True, exist_ok=True)
         archivo = CHATS_DIR / f"{numeroEmpresa}{idUsuario}.txt"
         url_respuesta = (
             f"{settings.BASE_URL}/chat/responder"
@@ -131,14 +139,20 @@ async def chat_websocket(
             if texto is None:
                 break
 
-            # Sobreescribir el archivo con el mensaje actual
-            archivo.write_text(
-                json.dumps({
-                    "mensaje": texto,
-                    "url_respuesta": url_respuesta,
-                }, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            try:
+                archivo.write_text(
+                    json.dumps({
+                        "mensaje": texto,
+                        "url_respuesta": url_respuesta,
+                    }, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                log_chat(f"Archivo escrito: {archivo}")
+            except Exception as e:
+                log_chat(f"ERROR al escribir archivo {archivo}: {e}")
+                await ws.send_json({"tipo": "error", "mensaje": f"Error al escribir archivo: {e}"})
+                libre.set()
+                continue
 
             await ws.send_json({
                 "tipo": "enviado",

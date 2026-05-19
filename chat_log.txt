@@ -1,9 +1,0 @@
-[2026-05-16 21:50:09]  → bot: Holaaaaaaaa
-[2026-05-16 21:50:09] bot → : Hola , recibí tu mensaje: 'Holaaaaaaaa'
-
-[2026-05-16 21:50:35] 1 → bot: Hola
-[2026-05-16 21:50:35] bot → 1: Hola 1, recibí tu mensaje: 'Hola'
-
-[2026-05-16 21:52:27] 1 → bot: Hola desde bot
-[2026-05-16 21:52:27] bot → 1: Hola 1, recibí tu mensaje: 'Hola desde bot'
-
